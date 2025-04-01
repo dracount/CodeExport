@@ -1,0 +1,4 @@
+# FILE: requirements.txt
+
+# GUI Styling Library - Provides themed Tkinter widgets
+ttkbootstrap>=1.10.1

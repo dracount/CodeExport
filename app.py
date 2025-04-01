@@ -1,3 +1,7 @@
+# FILE: D:\PROCESSES\vscode_projects\CodeExport\app.py
+# Action: Add configuration for the 'selected' tag background in the create_project_interface method.
+# Line Number: Insert after line 173
+
 import os
 import tkinter as tk
 from tkinter.font import Font
@@ -169,8 +173,8 @@ class FileMergerApp:
             self.tree.tag_configure('text', foreground=self.style.colors.info)
             self.tree.tag_configure('image', foreground=self.style.colors.warning)
             self.tree.tag_configure('error', foreground=self.style.colors.danger)
-            # Add selected tag configuration if needed for visual feedback beyond checkbox
-            # self.tree.tag_configure('selected', background=self.style.colors.light)
+            # Configure 'selected' tag for row highlighting
+            self.tree.tag_configure('selected', background=self.style.colors.selectbg, foreground=self.style.colors.selectfg)
         except AttributeError: # Fallback if style colors are not defined
              print("Using basic foreground colors for tree tags.")
              self.tree.tag_configure('folder', foreground='navy')
@@ -179,6 +183,9 @@ class FileMergerApp:
              self.tree.tag_configure('text', foreground='darkblue')
              self.tree.tag_configure('image', foreground='purple')
              self.tree.tag_configure('error', foreground='red')
+             # Fallback 'selected' tag configuration
+             self.tree.tag_configure('selected', background='lightblue', foreground='black') # Use a distinct background
+
 
         # Bind events to Treeview
         self.tree.bind("<ButtonRelease-1>", self.on_tree_item_click) # Handle checkbox clicks primarily
@@ -389,21 +396,29 @@ class FileMergerApp:
              return
 
         current_tags = list(self.tree.item(item_id, "tags"))
-        currently_selected = "selected" in current_tags
+        # Filter out 'selected' tag if it exists, to avoid duplicates or removal errors
+        current_tags = [tag for tag in current_tags if tag != 'selected']
+        currently_selected = "selected" in self.tree.item(item_id, "tags") # Re-check initial state
 
         needs_update = False
-        if should_select and not currently_selected:
-             current_tags.append("selected")
-             needs_update = True
-        elif not should_select and currently_selected:
-             current_tags.remove("selected")
-             needs_update = True
+        if should_select:
+            # Add 'selected' tag if it's not already conceptually there
+            if not currently_selected:
+                current_tags.append("selected")
+                needs_update = True
+        else: # should_deselect
+            # Remove 'selected' tag only if it was conceptually there
+            if currently_selected:
+                # We already filtered it out above, so just need to mark update
+                needs_update = True
 
+        # Apply the updated tags if a change occurred
         if needs_update:
              self.tree.item(item_id, tags=tuple(current_tags))
-             self.update_selection_indicator(item_id)
+             self.update_selection_indicator(item_id) # Update checkbox visual
 
              # If it's a directory, recursively apply the same state to children
+             # Check for 'folder' tag within the potentially updated current_tags
              if "folder" in current_tags:
                  for child_id in self.tree.get_children(item_id):
                      self.update_item_selection(child_id, should_select)
