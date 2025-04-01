@@ -1,0 +1,8 @@
+/.venv
+/build
+/code.txt
+/dist
+/FileMergerPro.spec
+/main.spec
+/workspace.code-workspace
+/__pycache__
