@@ -2,9 +2,6 @@
 
 A graphical utility built with Python and Tkinter/ttkbootstrap to browse directories, select specific files and folders, and merge their content into a single output file. Includes project management features to save and load configurations, selections, and rules.
 
-**(Consider adding a screenshot or GIF of the application here!)**
-<!-- ![File Merger Pro Screenshot](screenshot.PNG) -->
-
 ## Overview
 
 File Merger Pro helps you consolidate text-based content from multiple files across a directory structure. It's particularly useful for:
