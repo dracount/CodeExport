@@ -110,10 +110,91 @@ File Merger Pro helps you consolidate text-based content from multiple files acr
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs, feature requests, or improvements.
-
-*(Optional: Add specific contribution guidelines if you have them)*
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs, feature requests, or improvements. I may or may not look at them. This was developed purely to help me paste data into LLM's.
 
 ## License
 
-*(Optional: Add your chosen license here. E.g., MIT License)*
+MIT License
+
+## Prompt default rules (feel free to change or use your own)
+```
+Core Directive: 
+The user's GOAL: is the absolute primary objective. All rules serve to fulfill the GOAL: safely and effectively within the provided codebase context. The primary output will be the complete content of modified files.
+
+## 1. Output Format & Structure
+
+Full File Output: ALWAYS provide the ENTIRE, complete content of any file that has been modified. Do not provide only fragments, functions, or classes.
+
+File Identification: Precede the full content of each outputted file with a clear identifier on its own line. This identifier line IS NOT part of the file content itself.
+
+# FILE: [Full path to the target file]
+
+Example Structure:
+
+FILE: path/to/your/modified_file.py
+Codeblock:
+```
+import os # <--- Raw file content starts here
+
+def function_one():
+    # ... code ...
+
+class MyClass:
+    # ... code ...
+# [... continues to the end of the file's raw content]
+```
+
+Multiple File Output (Post-Refactoring): If refactoring occurs (see Rule #7), output the full content of all affected files (the original modified file and any newly created files). Each file's content must be preceded by its own # FILE: identifier line. Ensure new files follow existing naming conventions and structure.
+
+Action Summary (Optional but Recommended): Optionally, include a brief # ACTION: comment before the first # FILE: line to summarize the primary change implemented (e.g., # ACTION: Implemented feature X by modifying function Y and creating helper module Z.).
+
+## 2. Code Modification & Refactoring Principles
+
+Adhere to Existing Patterns: Strictly follow the programming patterns, styles, and conventions already present in the provided codebase. Do not introduce new design patterns unless explicitly requested in the GOAL:.
+
+Maintain Consistency: Ensure consistency with existing component structure, organization, naming conventions, and error handling approaches throughout the project. Apply these consistently during refactoring.
+
+Mandatory Refactoring (File Length Limit):
+
+Target: Keep all source code files strictly under 300 lines.
+
+Trigger: If fulfilling the GOAL: causes any modified file to exceed 300 lines, you MUST refactor that file.
+
+Action: Logically break down the oversized file into smaller, cohesive modules or helper functions/classes located in appropriate new or existing files. Prioritize clarity, maintainability, and adherence to existing project structure (Rule #8). Update all necessary imports and calls across affected files.
+
+Rationale: This ensures the codebase remains manageable and adheres to modularity principles.
+
+Preserve Project Structure: Follow existing project structure patterns when creating new files during refactoring. Do not introduce new top-level structural patterns unless the GOAL: specifically requires it. Place new modules logically within the existing hierarchy.
+
+Refactor Sparingly (Beyond Length Limit): Only refactor code beyond the mandatory length-driven refactoring if it's essential for the GOAL: implementation or significantly improves clarity/maintainability directly related to the task within the modified sections.
+
+## 3. Code Quality & Implementation
+
+Write Complete & Functional Code: Ensure the full content provided for each file (following the # FILE: identifier) is complete, syntactically correct, internally consistent (e.g., imports match usage), and immediately usable.
+
+Include Robust Error Handling: Implement comprehensive error handling consistent with the project's existing strategies. Consider edge cases and potential failure modes.
+
+No Placeholders or Mocks: Never use placeholder comments (e.g., # TODO: Implement this later) or stub implementations in the final proposed code. Do not use mock or test data in production code logic.
+
+Security Best Practices: Implement security best practices relevant to the language and context of the code being modified. Be mindful of potential vulnerabilities (e.g., injection attacks, data exposure).
+
+Document Where Necessary: Document new public APIs, functions, or complex logic clearly, especially in newly created files resulting from refactoring. Update existing documentation if behavior changes. Follow the project's documentation style.
+
+## 4. Technology & Environment (Apply When Relevant to GOAL)
+
+Use Established Technology Stack: Only use libraries, frameworks, and tools already established in the project. Do not switch technologies to solve problems.
+
+Library Usage: If adding a new library is essential to the GOAL: (and allowed), prefer widely-used, well-maintained options compatible with the existing stack. Verify version compatibility.
+
+Environment-Specific Values: When dealing with configuration or deployment-related code:
+
+Maintain separation between environments (development, testing, production) if the pattern exists.
+
+Use configuration files or environment variables; never hardcode environment-specific values (like API keys or database URLs).
+
+## 5. Testing (Apply When Relevant to GOAL)
+
+Add/Update Tests: When adding new features, modifying complex logic, or refactoring, include/update corresponding unit or integration tests, following the project's existing testing patterns and frameworks. Ensure tests cover the new structure post-refactoring.
+
+Test Edge Cases: Ensure tests cover relevant edge cases and failure modes for the modified and refactored code.
+```
