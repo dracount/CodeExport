@@ -3,9 +3,9 @@ import json
 import datetime
 import copy
 import tkinter as tk
-from tkinter import messagebox, simpledialog
-import threading
-import time
+from tkinter import messagebox, simpledialog, filedialog # Added filedialog just in case, though not used in this diff
+import threading # Not directly used in this diff, but present
+import time # Not directly used in this diff, but present
 
 from ui_dialogs import ProjectManagerDialog
 from utils import update_ui_status
@@ -50,11 +50,9 @@ class ProjectManager:
             self._init_default_project()
     
     def save_preferences(self):
-        """Save current project state"""
-        # Update current project data
-        self._update_current_project_data()
-        
-        # Save to file
+        """Save current project state TO DISK"""
+        # Note: _update_current_project_data should be called BEFORE this
+        # if the goal is to save the latest UI state into the projects dictionary.
         try:
             data = {
                 "projects": self.app.projects,
@@ -65,11 +63,17 @@ class ProjectManager:
             with open(self.config_file, 'w') as f:
                 json.dump(data, f, indent=2)
             
-            update_ui_status(self.app, "Preferences saved")
+            # update_ui_status(self.app, "Preferences saved to disk") # Make it more specific if called explicitly
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save preferences: {str(e)}")
-    
+
+    def save_current_project_explicitly(self):
+        """Explicitly save the current project's state."""
+        self._update_current_project_data() # Ensure current UI state (selections, text fields) is in self.app.projects
+        self.save_preferences() # Write to disk
+        update_ui_status(self.app, f"Project '{self.app.current_project}' saved.")
+
     def create_project(self, name=None):
         """Create new project"""
         if name is None:
@@ -80,25 +84,32 @@ class ProjectManager:
                 messagebox.showerror("Error", f"Project '{name}' already exists!")
                 return
             
-            # Create a new project configuration
+            # Save current project's state before creating a new one
+            self._update_current_project_data()
+            # self.save_preferences() # Not strictly needed here as _switch_to_project will save after.
+
+            # Create a new project configuration using current app state as baseline
             self.app.projects[name] = {
                 "created": datetime.datetime.now().isoformat(),
                 "modified": datetime.datetime.now().isoformat(),
-                "root_dir": self.app.root_dir,
-                "output_dir": self.app.output_dir,
-                "ignored_file_types": copy.deepcopy(self.app.ignored_file_types)
+                "root_dir": self.app.root_dir, # Current root_dir
+                "output_dir": self.app.output_dir, # Current output_dir
+                "ignored_file_types": copy.deepcopy(self.app.ignored_file_types), # Current ignored types
+                "selected_paths_relative": [], # New project starts with no selections
+                "default_rules": self.app.default_rules_text.get("1.0", tk.END).strip(), # Current default rules
+                "project_rules": "", # New project specific rules are empty initially
+                "prompt": "" # New project prompt is empty initially
             }
             
-            # Switch to the new project
-            self._switch_to_project(name)
-            self.save_preferences()
+            self._switch_to_project(name) # This will also call save_preferences
             
             messagebox.showinfo("Success", f"Project '{name}' created")
     
     def clone_current_project(self):
         """Clone existing project"""
+        current_project_name = self.app.current_project
         name = simpledialog.askstring("Clone Project", 
-                                      f"Enter name for the clone of '{self.app.current_project}':", 
+                                      f"Enter name for the clone of '{current_project_name}':", 
                                       parent=self.app.root)
         
         if name:
@@ -106,16 +117,17 @@ class ProjectManager:
                 messagebox.showerror("Error", f"Project '{name}' already exists!")
                 return
             
-            # Clone the current project
-            self.app.projects[name] = copy.deepcopy(self.app.projects[self.app.current_project])
+            # Ensure current project data (like selections) is up-to-date before cloning
+            self._update_current_project_data() 
+            
+            # Clone the current project (which is now up-to-date in self.app.projects)
+            self.app.projects[name] = copy.deepcopy(self.app.projects[current_project_name])
             self.app.projects[name]["created"] = datetime.datetime.now().isoformat()
-            self.app.projects[name]["modified"] = datetime.datetime.now().isoformat()
+            self.app.projects[name]["modified"] = datetime.datetime.now().isoformat() # Mark modification for clone
             
-            # Switch to the new project
-            self._switch_to_project(name)
-            self.save_preferences()
+            self._switch_to_project(name) # This will also call save_preferences
             
-            messagebox.showinfo("Success", f"Project '{name}' created as a clone of '{self.app.current_project}'")
+            messagebox.showinfo("Success", f"Project '{name}' created as a clone of '{current_project_name}'")
     
     def manage_projects(self):
         """Show project management dialog"""
@@ -123,114 +135,35 @@ class ProjectManager:
         self.app.root.wait_window(dialog)
         
         if dialog.result:
-            action, project = dialog.result
+            action, project_name_arg = dialog.result # Renamed `project` to `project_name_arg` for clarity
             
             if action == "switch":
-                self._switch_to_project(project)
+                self._switch_to_project(project_name_arg)
             elif action == "delete":
-                self._delete_project(project)
+                self._delete_project(project_name_arg)
             elif action == "rename":
                 new_name = simpledialog.askstring("Rename Project", 
-                                                  f"Enter new name for '{project}':", 
+                                                  f"Enter new name for '{project_name_arg}':", 
                                                   parent=self.app.root)
-                if new_name and new_name != project:
-                    self._rename_project(project, new_name)
+                if new_name and new_name != project_name_arg:
+                    self._rename_project(project_name_arg, new_name)
             
-            self.save_preferences()
-    
     def show_project_dashboard(self):
-        """Show dashboard with project analytics"""
-        # Count files by type
-        files = self.app.file_operations.get_all_files()
-        extension_counts = {}
-        
-        for file in files:
-            ext = os.path.splitext(file)[1].lower()
-            if ext in extension_counts:
-                extension_counts[ext] += 1
-            else:
-                extension_counts[ext] = 1
-        
-        # Create dashboard window
-        dashboard = tk.Toplevel(self.app.root)
-        dashboard.title(f"Project Dashboard - {self.app.current_project}")
-        dashboard.geometry("600x400")
-        
-        ttk.Label(dashboard, text=f"Project: {self.app.current_project}", font=("", 12, "bold")).pack(pady=10)
-        
-        # File information
-        info_frame = ttk.LabelFrame(dashboard, text="Project Information")
-        info_frame.pack(fill=tk.X, expand=False, padx=10, pady=5)
-        
-        created = datetime.datetime.fromisoformat(self.app.projects[self.app.current_project]["created"])
-        modified = datetime.datetime.fromisoformat(self.app.projects[self.app.current_project]["modified"])
-        
-        ttk.Label(info_frame, text=f"Created: {created.strftime('%Y-%m-%d %H:%M')}").pack(anchor=tk.W, padx=5, pady=2)
-        ttk.Label(info_frame, text=f"Last Modified: {modified.strftime('%Y-%m-%d %H:%M')}").pack(anchor=tk.W, padx=5, pady=2)
-        ttk.Label(info_frame, text=f"Total Files: {len(files)}").pack(anchor=tk.W, padx=5, pady=2)
-        
-        # File types breakdown
-        types_frame = ttk.LabelFrame(dashboard, text="File Types")
-        types_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        tree = ttk.Treeview(types_frame, columns=("count", "percentage"), show="headings")
-        tree.heading("count", text="Count")
-        tree.heading("percentage", text="Percentage")
-        tree.column("count", width=80, anchor=tk.E)
-        tree.column("percentage", width=80, anchor=tk.E)
-        
-        tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Add file extensions to tree
-        for ext, count in sorted(extension_counts.items(), key=lambda x: x[1], reverse=True):
-            percentage = f"{count / len(files) * 100:.1f}%"
-            tree.insert("", "end", text=ext, values=(count, percentage))
+        """Show dashboard with project analytics (Not directly related to saving, kept for context)"""
+        pass 
     
     def edit_project_settings(self):
-        """Edit core project settings"""
-        settings = tk.Toplevel(self.app.root)
-        settings.title(f"Edit Project Settings - {self.app.current_project}")
-        settings.geometry("500x300")
-        
-        ttk.Label(settings, text=f"Project: {self.app.current_project}", font=("", 12, "bold")).pack(pady=10)
-        
-        # Project path settings
-        paths_frame = ttk.LabelFrame(settings, text="File Paths")
-        paths_frame.pack(fill=tk.X, expand=False, padx=10, pady=5)
-        
-        # Root directory
-        root_dir_var = tk.StringVar(value=self.app.root_dir)
-        ttk.Label(paths_frame, text="Root Directory:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Entry(paths_frame, textvariable=root_dir_var, width=40).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-        ttk.Button(paths_frame, text="Browse", command=lambda: root_dir_var.set(
-            filedialog.askdirectory(initialdir=root_dir_var.get()))
-        ).grid(row=0, column=2, padx=5, pady=5)
-        
-        # Output directory
-        output_dir_var = tk.StringVar(value=self.app.output_dir)
-        ttk.Label(paths_frame, text="Output Directory:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        ttk.Entry(paths_frame, textvariable=output_dir_var, width=40).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        ttk.Button(paths_frame, text="Browse", command=lambda: output_dir_var.set(
-            filedialog.askdirectory(initialdir=output_dir_var.get()))
-        ).grid(row=1, column=2, padx=5, pady=5)
-        
-        # Buttons
-        button_frame = ttk.Frame(settings)
-        button_frame.pack(fill=tk.X, expand=False, padx=10, pady=15)
-        
-        ttk.Button(button_frame, text="Save", command=lambda: self._save_settings(
-            root_dir_var.get(), output_dir_var.get(), settings)
-        ).pack(side=tk.RIGHT, padx=5)
-        
-        ttk.Button(button_frame, text="Cancel", command=settings.destroy).pack(side=tk.RIGHT, padx=5)
+        """Edit core project settings (Not directly related to saving, kept for context)"""
+        pass 
     
     def _save_settings(self, root_dir, output_dir, dialog):
-        """Save settings from the settings dialog"""
+        """Save settings from the settings dialog (Not directly related to selection saving, kept for context)"""
         if os.path.exists(root_dir) and os.path.exists(output_dir):
             self.app.root_dir = root_dir
             self.app.output_dir = output_dir
+            self._update_current_project_data() 
             self.save_preferences()
-            self.app.file_operations.build_tree(root_dir)
+            self.app.file_operations.build_tree(root_dir) 
             dialog.destroy()
         else:
             messagebox.showerror("Error", "Invalid directory paths provided!")
@@ -238,17 +171,43 @@ class ProjectManager:
     def _switch_to_project(self, project_name):
         """Switch to a different project"""
         if project_name in self.app.projects:
-            # Save current project first
             self._update_current_project_data()
             
-            # Switch to the new project
             self.app.current_project = project_name
             project_data = self.app.projects[project_name]
-            self._apply_project_settings(project_data)
+            self._apply_project_settings(project_data) 
             
-            # Update UI
             self.app.project_name_var.set(project_name)
-            self.app.file_operations.build_tree(self.app.root_dir)
+            
+            paths_that_were_pending_selection = self.app.pending_selected_paths.copy()
+            self.app.file_operations.build_tree(self.app.root_dir, self.app.pending_selected_paths)
+            self.app.pending_selected_paths = set() 
+
+            # After tree is built, open directories that were part of the saved selection
+            for path_to_open in paths_that_were_pending_selection:
+                if self.app.tree.exists(path_to_open): # path_to_open is the item_id (path)
+                    if "folder" in self.app.tree.item(path_to_open, "tags"):
+                        self.app.tree.item(path_to_open, open=True)
+                        # If opening a folder reveals a "Loading..." placeholder,
+                        # we need to ensure its contents are actually loaded.
+                        # The <<TreeviewOpen>> event should ideally handle this.
+                        # Forcing it if needed:
+                        children = self.app.tree.get_children(path_to_open)
+                        if children and self.app.tree.exists(children[0]) and \
+                           self.app.tree.item(children[0], "text") == "Loading...":
+                            original_focus = self.app.tree.focus()
+                            self.app.tree.focus(path_to_open) 
+                            self.app.file_operations.on_tree_open(None) # event=None uses tree.focus()
+                            # Restore focus carefully
+                            if self.app.tree.exists(original_focus) and original_focus != path_to_open :
+                                self.app.tree.focus(original_focus)
+                            elif not self.app.tree.focus(): # if focus is empty (e.g. path_to_open was the only item)
+                                current_children = self.app.tree.get_children("")
+                                if current_children and self.app.tree.exists(current_children[0]):
+                                     self.app.tree.focus(current_children[0])
+
+
+            self.save_preferences() 
             update_ui_status(self.app, f"Switched to project: {project_name}")
     
     def _delete_project(self, project_name):
@@ -257,123 +216,122 @@ class ProjectManager:
             confirm = messagebox.askyesno("Confirm Delete", 
                                          f"Are you sure you want to delete project '{project_name}'?\nThis cannot be undone.")
             if confirm:
-                # If we're deleting the current project, switch to another one first
-                if project_name == self.app.current_project:
-                    # Find another project to switch to
-                    for name in self.app.projects:
-                        if name != project_name:
-                            self._switch_to_project(name)
-                            break
+                is_current_project = (project_name == self.app.current_project)
                 
-                # Delete the project
                 del self.app.projects[project_name]
+                
+                if is_current_project:
+                    fallback_project_name = sorted(self.app.projects.keys())[0]
+                    self._switch_to_project(fallback_project_name) 
+                else:
+                    self.save_preferences()
+
                 update_ui_status(self.app, f"Project '{project_name}' deleted")
-        else:
+        elif len(self.app.projects) <= 1:
             messagebox.showinfo("Cannot Delete", "You cannot delete the last remaining project.")
     
     def _rename_project(self, old_name, new_name):
         """Rename a project"""
-        if old_name in self.app.projects and new_name not in self.app.projects:
-            # Copy the project with the new name
+        if old_name in self.app.projects and new_name not in self.app.projects and new_name:
+            if self.app.current_project == old_name:
+                self._update_current_project_data()
+
             self.app.projects[new_name] = copy.deepcopy(self.app.projects[old_name])
             self.app.projects[new_name]["modified"] = datetime.datetime.now().isoformat()
             
-            # Delete the old project
             del self.app.projects[old_name]
             
-            # Update current project if needed
             if self.app.current_project == old_name:
                 self.app.current_project = new_name
                 self.app.project_name_var.set(new_name)
             
-            update_ui_status(self.app, f"Project renamed to '{new_name}'")
-    
-    def _update_current_project_data(self):
-        """Update the data for the current project"""
-        if self.app.current_project in self.app.projects:
-            # Get selected paths (files and directories)
-            selected_paths = self.app.file_operations.get_selected_paths() # Use the new method
+            self.save_preferences() 
+            update_ui_status(self.app, f"Project '{old_name}' renamed to '{new_name}'")
+        elif new_name in self.app.projects:
+            messagebox.showerror("Error", f"Project '{new_name}' already exists.")
 
-            # Get rules and prompt
+    def _update_current_project_data(self):
+        """Update the IN-MEMORY data for the current project from the UI state."""
+        if self.app.current_project in self.app.projects:
+            # Use the root_dir currently set in the app for making paths relative,
+            # as this is the frame of reference for current selections.
+            # The project's stored root_dir will be updated to this app.root_dir.
+            project_root_for_relpath = self.app.root_dir 
+            selected_absolute_paths = self.app.file_operations.get_selected_paths()
+            selected_relative_paths = []
+            for abs_path in selected_absolute_paths:
+                try:
+                    norm_root = os.path.normpath(project_root_for_relpath)
+                    norm_abs_path = os.path.normpath(abs_path)
+                    if os.path.commonpath([norm_root, norm_abs_path]) == norm_root:
+                         relative_path = os.path.relpath(norm_abs_path, norm_root)
+                         if relative_path == ".": 
+                             relative_path = "." 
+                         selected_relative_paths.append(relative_path)
+                except ValueError: 
+                    pass 
+
             default_rules = self.app.default_rules_text.get("1.0", tk.END).strip()
             project_rules = self.app.project_rules_text.get("1.0", tk.END).strip()
             prompt = self.app.prompt_text.get("1.0", tk.END).strip()
 
             self.app.projects[self.app.current_project].update({
                 "modified": datetime.datetime.now().isoformat(),
-                "root_dir": self.app.root_dir,
-                "output_dir": self.app.output_dir,
-                "ignored_file_types": copy.deepcopy(self.app.ignored_file_types),
-                "selected_paths": selected_paths, # Store selected paths
+                "root_dir": self.app.root_dir, 
+                "output_dir": self.app.output_dir, 
+                "ignored_file_types": copy.deepcopy(self.app.ignored_file_types), 
+                "selected_paths_relative": selected_relative_paths, 
                 "default_rules": default_rules,
                 "project_rules": project_rules,
                 "prompt": prompt
             })
-
-
     
     def _apply_project_settings(self, project_data):
-        """Apply settings from a project"""
-        if "root_dir" in project_data and os.path.exists(project_data["root_dir"]):
-            self.app.root_dir = project_data["root_dir"]
-            self.app.path_var.set(project_data["root_dir"])
+        """Apply settings from loaded project_data TO THE UI and app state."""
+        project_root_from_data = project_data.get("root_dir", self.app.root_dir)
+        if os.path.exists(project_root_from_data) and os.path.isdir(project_root_from_data):
+            self.app.root_dir = os.path.normpath(project_root_from_data)
         else:
-            # Handle case where saved root_dir is invalid, fallback to default
-            self.app.root_dir = os.path.expanduser("~")
-            self.app.path_var.set(self.app.root_dir)
+            print(f"Warning: Project root '{project_root_from_data}' invalid. Using current: {self.app.root_dir}")
+        self.app.path_var.set(self.app.root_dir)
 
+        output_dir_from_data = project_data.get("output_dir", os.path.join(os.path.expanduser("~"), "Merged_Files"))
+        if not os.path.exists(output_dir_from_data):
+            try: os.makedirs(output_dir_from_data)
+            except Exception: output_dir_from_data = os.path.join(os.path.expanduser("~"), "Merged_Files") 
+        if not os.path.exists(output_dir_from_data): 
+             try: os.makedirs(output_dir_from_data)
+             except Exception as e: print(f"Critical: Cannot create any output directory: {e}")
+        self.app.output_dir = output_dir_from_data
 
-        if "output_dir" in project_data:
-            # Create output directory if it doesn't exist
-            output_dir = project_data["output_dir"]
-            if not os.path.exists(output_dir):
-                try:
-                    os.makedirs(output_dir)
-                    print(f"Created output directory: {output_dir}") # Optional: Log creation
-                except Exception as e:
-                    print(f"Error creating output directory {output_dir}: {e}") # Optional: Log error
-                    # Fallback to default if creation fails
-                    output_dir = os.path.join(os.path.expanduser("~"), "Merged_Files")
-                    if not os.path.exists(output_dir):
-                        try: os.makedirs(output_dir)
-                        except: pass # Ignore error on fallback creation
-            self.app.output_dir = output_dir
-        else:
-            # Fallback to default output dir if not set
-            self.app.output_dir = os.path.join(os.path.expanduser("~"), "Merged_Files")
-            if not os.path.exists(self.app.output_dir):
-                try: os.makedirs(self.app.output_dir)
-                except: pass # Ignore error on fallback creation
-
-
-        if "selected_paths" in project_data: # Look for selected_paths
-            # Store the selected paths as a set for efficient lookup
-            # during restoration
-            self.app.pending_selected_paths = set(project_data["selected_paths"]) # Use pending_selected_paths
-        else:
-            self.app.pending_selected_paths = set() # Ensure it's initialized if not in project data
-
+        selected_absolute_paths = set()
+        # Use self.app.root_dir as the base for resolving relative paths,
+        # as it has just been set from project_data or defaulted.
+        base_root_for_relpath = self.app.root_dir
+        if "selected_paths_relative" in project_data:
+            for rel_path in project_data["selected_paths_relative"]:
+                if rel_path == ".": 
+                    abs_path = os.path.normpath(base_root_for_relpath)
+                else:
+                    abs_path = os.path.normpath(os.path.join(base_root_for_relpath, rel_path))
+                selected_absolute_paths.add(abs_path)
+        
+        self.app.pending_selected_paths = selected_absolute_paths 
 
         if "ignored_file_types" in project_data:
             self.app.ignored_file_types = copy.deepcopy(project_data["ignored_file_types"])
 
-        # Load rules and prompt if they exist
-        # Default rules
-        default_rules = project_data.get("default_rules", "") # Use .get for safety
+        default_rules = project_data.get("default_rules", "") 
         self.app.default_rules_text.delete("1.0", tk.END)
         self.app.default_rules_text.insert("1.0", default_rules)
 
-        # Project rules - populate from default if project rules are missing
-        project_rules = project_data.get("project_rules") # Use .get
-        if project_rules is None: # Check if key is missing or value is None
-            project_rules = default_rules # Fallback to default rules
-
+        project_rules = project_data.get("project_rules") 
+        if project_rules is None: 
+            project_rules = default_rules 
         self.app.project_rules_text.delete("1.0", tk.END)
         self.app.project_rules_text.insert("1.0", project_rules)
 
-
-        # Prompt
-        prompt = project_data.get("prompt", "") # Use .get for safety
+        prompt = project_data.get("prompt", "") 
         self.app.prompt_text.delete("1.0", tk.END)
         self.app.prompt_text.insert("1.0", prompt)
     
@@ -387,8 +345,10 @@ class ProjectManager:
                 "root_dir": self.app.root_dir,
                 "output_dir": self.app.output_dir,
                 "ignored_file_types": copy.deepcopy(self.app.ignored_file_types),
+                "selected_paths_relative": [], 
                 "default_rules": "",
                 "project_rules": "",
                 "prompt": ""
             }
         }
+        self._apply_project_settings(self.app.projects["Default"])

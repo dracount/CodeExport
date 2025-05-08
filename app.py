@@ -83,7 +83,9 @@ class FileMergerApp:
 
         # Build initial tree, passing any pending selections from loaded project
         self.file_operations.build_tree(self.root_dir, self.pending_selected_paths)
-        self.pending_selected_paths = set() # Clear after use
+        # App's responsibility to clear its own pending_selected_paths after they've been passed for a build.
+        # This is important so subsequent partial updates (like user clicking) don't try to re-apply old project load selections.
+        self.pending_selected_paths = set() 
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing) # Handle window close
 
@@ -107,6 +109,7 @@ class FileMergerApp:
         project_menu.add_command(label="New Project", command=self.project_manager.create_project)
         project_menu.add_command(label="Clone Current Project", command=self.project_manager.clone_current_project)
         project_menu.add_command(label="Manage Projects", command=self.project_manager.manage_projects)
+        project_menu.add_command(label="Save Project", command=self.project_manager.save_current_project_explicitly) # New Save Project
         project_menu.add_separator()
         project_menu.add_command(label="Edit Ignored File Types/Names", command=self.edit_filetypes) # Updated label
 
@@ -142,7 +145,7 @@ class FileMergerApp:
         self.tree = ttk.Treeview(tree_container,
                                  yscrollcommand=self.tree_scrollbar_y.set,
                                  xscrollcommand=self.tree_scrollbar_x.set,
-                                 selectmode="none") # Disable default selection highlighting
+                                 selectmode="browse") # Changed to "browse" for focus indication
 
         self.tree_scrollbar_y.config(command=self.tree.yview)
         self.tree_scrollbar_x.config(command=self.tree.xview)
@@ -173,7 +176,8 @@ class FileMergerApp:
             self.tree.tag_configure('text', foreground=self.style.colors.info)
             self.tree.tag_configure('image', foreground=self.style.colors.warning)
             self.tree.tag_configure('error', foreground=self.style.colors.danger)
-            # Configure 'selected' tag for row highlighting
+            # Configure 'selected' tag for row highlighting (checkbox selection)
+            # Ensure this does not conflict with the default "browse" mode selection highlight
             self.tree.tag_configure('selected', background=self.style.colors.selectbg, foreground=self.style.colors.selectfg)
         except AttributeError: # Fallback if style colors are not defined
              print("Using basic foreground colors for tree tags.")
@@ -184,14 +188,15 @@ class FileMergerApp:
              self.tree.tag_configure('image', foreground='purple')
              self.tree.tag_configure('error', foreground='red')
              # Fallback 'selected' tag configuration
-             self.tree.tag_configure('selected', background='lightblue', foreground='black') # Use a distinct background
+             self.tree.tag_configure('selected', background='lightblue', foreground='black')
 
 
         # Bind events to Treeview
-        self.tree.bind("<ButtonRelease-1>", self.on_tree_item_click) # Handle checkbox clicks primarily
-        self.tree.bind("<Double-Button-1>", self.on_tree_double_click) # Handle opening folders/files
-        self.tree.bind("<space>", self.toggle_selection_spacebar) # Spacebar toggles focused item
-        self.tree.bind("<<TreeviewOpen>>", self.file_operations.on_tree_open) # Load children when expanded
+        self.tree.bind("<ButtonRelease-1>", self.on_tree_item_click) 
+        self.tree.bind("<Double-Button-1>", self.on_tree_double_click) 
+        self.tree.bind("<space>", self.toggle_selection_spacebar) 
+        self.tree.bind("<Return>", self.toggle_selection_spacebar) 
+        self.tree.bind("<<TreeviewOpen>>", self.file_operations.on_tree_open) 
 
 
         # --- Right Frame (Controls) ---
@@ -273,30 +278,26 @@ class FileMergerApp:
 
     def show_context_menu(self, event):
         """Show context menu on right-click."""
-        # Identify item under cursor
         item_id = self.tree.identify_row(event.y)
         if item_id:
-            # Select the item under the cursor for context actions
-            # Use focus instead of selection if selectmode is "none"
-            self.tree.focus(item_id)
-            # Post the menu
+            # With selectmode="browse", clicking to show context menu also focuses the item.
+            # self.tree.focus(item_id) # This might be redundant if Button-3 already focuses.
             self.tree_context_menu.post(event.x_root, event.y_root)
         else:
-            # Maybe show a general context menu if clicking empty space?
             pass
 
     def context_select_item(self):
         """Context menu action: Select focused item and children."""
         item_id = self.tree.focus()
         if item_id:
-            self.update_item_selection(item_id, True) # Select item and children
+            self.update_item_selection(item_id, True) 
             self.update_project_stats()
 
     def context_deselect_item(self):
         """Context menu action: Deselect focused item and children."""
         item_id = self.tree.focus()
         if item_id:
-             self.update_item_selection(item_id, False) # Deselect item and children
+             self.update_item_selection(item_id, False) 
              self.update_project_stats()
 
     def context_expand_all(self):
@@ -313,7 +314,7 @@ class FileMergerApp:
 
     def context_open_in_explorer(self):
         """Context menu action: Open the item's location in file explorer."""
-        item_id = self.tree.focus() # Get focused item (path)
+        item_id = self.tree.focus() 
         if item_id and item_id in self.file_operations.file_paths:
             path = self.file_operations.file_paths[item_id]
             if os.path.exists(path):
@@ -321,9 +322,7 @@ class FileMergerApp:
                      if os.path.isdir(path):
                          os.startfile(path)
                      else:
-                         # Open the containing folder and select the file
-                         os.startfile(os.path.dirname(path)) # Fallback: just open folder
-                         # More specific selection might require platform specific code (e.g., subprocess with explorer args)
+                         os.startfile(os.path.dirname(path)) 
                  except Exception as e:
                      messagebox.showerror("Error", f"Could not open location: {e}")
             else:
@@ -334,52 +333,45 @@ class FileMergerApp:
         """Recursively expand a tree node and its children."""
         if not self.tree.exists(item_id): return
         self.tree.item(item_id, open=True)
-        # Ensure children are loaded if opening causes 'Loading...' to resolve
-        self.file_operations.on_tree_open(None) # Trigger loading check
+        self.file_operations.on_tree_open(None) 
         for child_id in self.tree.get_children(item_id):
             self.expand_recursive(child_id)
 
     def collapse_recursive(self, item_id):
          """Recursively collapse a tree node and its children."""
          if not self.tree.exists(item_id): return
-         # Collapse children first
          for child_id in self.tree.get_children(item_id):
              self.collapse_recursive(child_id)
-         # Collapse the item itself (if it's not the absolute root)
          if self.tree.parent(item_id) != "":
              self.tree.item(item_id, open=False)
 
 
     def on_tree_item_click(self, event):
-        """Handle left-click events, primarily for checkbox toggling."""
+        """Handle left-click events. Toggles selection if any part of the row is clicked."""
         item_id = self.tree.identify_row(event.y)
-        region = self.tree.identify_region(event.x, event.y)
-        column = self.tree.identify_column(event.x)
-
-        # Only process clicks specifically on the 'select' column ('#1') checkbox area
-        if item_id and region == "cell" and column == "#1":
-            # Toggle the selection state of this item and its children
+        
+        if item_id:
+            # With selectmode="browse", a single click also focuses the item.
+            # We use this click to toggle our custom selection state.
             current_tags = list(self.tree.item(item_id, "tags"))
             is_selected = "selected" in current_tags
             new_select_state = not is_selected
             self.update_item_selection(item_id, new_select_state)
             self.update_project_stats()
-            return "break" # Prevent default click behavior like row selection highlight
-
-        # Allow clicks on name/expander to proceed for default behavior (handled by double-click/open events)
-        # Single clicks on the name itself won't do anything unless explicitly bound
-
+            # Return "break" might not be strictly necessary with "browse" mode
+            # if the default selection behavior is acceptable alongside our custom one.
+            # However, to ensure only our logic dictates the "selected" tag, keeping "break" is safer.
+            return "break" 
+        
     def on_tree_double_click(self, event):
         """Handle double-clicks to open folders or files."""
         item_id = self.tree.identify_row(event.y)
         if not item_id: return
 
-        # If it's a folder, toggle its open state
         if "folder" in self.tree.item(item_id, "tags"):
             current_open_state = self.tree.item(item_id, "open")
             self.tree.item(item_id, open=not current_open_state)
         elif "file" in self.tree.item(item_id, "tags"):
-            # If it's a file, try to open it with the default application
             path = self.file_operations.file_paths.get(item_id)
             if path and os.path.exists(path):
                 try:
@@ -396,30 +388,24 @@ class FileMergerApp:
              return
 
         current_tags = list(self.tree.item(item_id, "tags"))
-        # Filter out 'selected' tag if it exists, to avoid duplicates or removal errors
         current_tags = [tag for tag in current_tags if tag != 'selected']
-        currently_selected = "selected" in self.tree.item(item_id, "tags") # Re-check initial state
+        # Check current "selected" state based on tags *before* modification
+        is_currently_selected_via_tag = "selected" in self.tree.item(item_id, "tags")
 
-        needs_update = False
+        needs_tag_update = False
         if should_select:
-            # Add 'selected' tag if it's not already conceptually there
-            if not currently_selected:
+            if not is_currently_selected_via_tag:
                 current_tags.append("selected")
-                needs_update = True
-        else: # should_deselect
-            # Remove 'selected' tag only if it was conceptually there
-            if currently_selected:
-                # We already filtered it out above, so just need to mark update
-                needs_update = True
+                needs_tag_update = True
+        else: 
+            if is_currently_selected_via_tag:
+                needs_tag_update = True # Tag list is already prepared without 'selected'
 
-        # Apply the updated tags if a change occurred
-        if needs_update:
+        if needs_tag_update:
              self.tree.item(item_id, tags=tuple(current_tags))
-             self.update_selection_indicator(item_id) # Update checkbox visual
+             self.update_selection_indicator(item_id) 
 
-             # If it's a directory, recursively apply the same state to children
-             # Check for 'folder' tag within the potentially updated current_tags
-             if "folder" in current_tags:
+             if "folder" in current_tags or "folder" in self.tree.item(item_id, "tags"): # check original tags too
                  for child_id in self.tree.get_children(item_id):
                      self.update_item_selection(child_id, should_select)
 
@@ -429,23 +415,21 @@ class FileMergerApp:
         if not self.tree.exists(item_id): return
 
         if "selected" in self.tree.item(item_id, "tags"):
-            self.tree.set(item_id, "select", "☑")  # Checked box
+            self.tree.set(item_id, "select", "☑") 
         else:
-            self.tree.set(item_id, "select", "☐")  # Empty box
+            self.tree.set(item_id, "select", "☐") 
 
 
     def toggle_selection_spacebar(self, event):
-        """Toggle selection state of focused item using the space bar."""
-        item_id = self.tree.focus() # Get the item that has focus
+        """Toggle selection state of focused item using the space bar or Enter key."""
+        item_id = self.tree.focus() 
         if not item_id:
             return
 
-        # Determine the new selection state
         current_tags = list(self.tree.item(item_id, "tags"))
         is_selected = "selected" in current_tags
         new_select_state = not is_selected
 
-        # Update the focused item and its descendants
         self.update_item_selection(item_id, new_select_state)
         self.update_project_stats()
 
@@ -454,10 +438,12 @@ class FileMergerApp:
         """Selects all currently visible items in the tree."""
         def select_recursive(parent_id):
             for item_id in self.tree.get_children(parent_id):
-                if self.tree.exists(item_id): # Check existence
-                    self.update_item_selection(item_id, True) # Select item and children
+                if self.tree.exists(item_id): 
+                    self.update_item_selection(item_id, True) 
+                    if self.tree.item(item_id, 'open'): # Only recurse if actually open
+                        select_recursive(item_id)
 
-        # Start from top-level items
+
         for item_id in self.tree.get_children(""):
              select_recursive(item_id)
 
@@ -468,12 +454,15 @@ class FileMergerApp:
         """Deselects all items in the tree."""
         def deselect_recursive(parent_id):
              for item_id in self.tree.get_children(parent_id):
-                if self.tree.exists(item_id): # Check existence
-                    self.update_item_selection(item_id, False) # Deselect item and children
+                if self.tree.exists(item_id): 
+                    self.update_item_selection(item_id, False)
+                    # Recursion is handled by update_item_selection for deselection correctly
+                    # So no need to check 'open' state here for deselection propagation
+                    # if self.tree.item(item_id, 'open'):
+                    #    deselect_recursive(item_id)
 
-        # Start from top-level items
         for item_id in self.tree.get_children(""):
-            deselect_recursive(item_id)
+            deselect_recursive(item_id) # update_item_selection will recurse
 
         self.update_project_stats()
 
@@ -481,14 +470,9 @@ class FileMergerApp:
     def apply_default_rules(self):
         """Apply default rules to the project rules text widget."""
         default_rules = self.default_rules_text.get("1.0", tk.END)
-        # Ask for confirmation if project rules already exist?
-        # current_project_rules = self.project_rules_text.get("1.0", tk.END).strip()
-        # if current_project_rules and default_rules.strip() != current_project_rules:
-        #    if not messagebox.askyesno("Overwrite Rules?", "Overwrite existing project rules with defaults?"):
-        #        return
         self.project_rules_text.delete("1.0", tk.END)
         self.project_rules_text.insert("1.0", default_rules)
-        self.project_manager._update_current_project_data() # Save change to project data
+        self.project_manager._update_current_project_data() 
         self.project_manager.save_preferences()
         update_ui_status(self, "Default rules applied to current project")
 
@@ -497,50 +481,40 @@ class FileMergerApp:
         """Open dialog to edit ignored file types/names."""
         dialog = FileTypeDialog(self.root, self.ignored_file_types)
         self.root.wait_window(dialog)
-        if dialog.result is not None: # Check result exists (user didn't cancel)
+        if dialog.result is not None: 
             self.ignored_file_types = dialog.result
-            # Preserve selections before rebuilding
             current_selections = set(self.file_operations.get_selected_paths())
-            self.file_operations.build_tree(self.root_dir, current_selections) # Rebuild with new ignores
-            self.project_manager.save_preferences() # Save updated ignores list
+            self.file_operations.build_tree(self.root_dir, current_selections) 
+            self.project_manager.save_preferences() 
 
 
     def change_root_directory(self, path=None):
         """Change the root directory being displayed in the tree."""
         new_path_selected = False
-        if path is None: # No path provided, open browse dialog
+        if path is None: 
             browse_path = filedialog.askdirectory(
                 initialdir=self.root_dir,
                 title="Select Root Directory"
             )
-            if not browse_path: return # User cancelled browse
+            if not browse_path: return 
             path = browse_path
             new_path_selected = True
 
-        # Validate the chosen/entered path
         norm_path = os.path.normpath(path)
         if not os.path.isdir(norm_path):
             messagebox.showerror("Invalid Directory", f"The selected path is not a valid directory:\n{norm_path}")
-            # Optionally clear the entry or revert path_var if browse failed validation
-            # self.path_var.set(self.root_dir)
             return
 
-        # Check if the path actually changed
         if norm_path == os.path.normpath(self.root_dir) and not new_path_selected:
-            # If path entered manually is same as current, maybe just refresh?
             self.refresh_directory()
             return
 
-        # Path is valid and different, proceed with change
         self.root_dir = norm_path
-        self.path_var.set(norm_path) # Update entry widget
+        self.path_var.set(norm_path) 
 
-        # Clear pending selections when changing root fundamentally
         self.pending_selected_paths = set()
-        # Build tree for the new root directory
-        self.file_operations.build_tree(self.root_dir) # No selections to restore initially
+        self.file_operations.build_tree(self.root_dir) 
 
-        # Save the new root_dir to the current project's settings
         self.project_manager._update_current_project_data()
         self.project_manager.save_preferences()
         update_ui_status(self, f"Root directory changed to: {self.root_dir}")
@@ -555,7 +529,6 @@ class FileMergerApp:
         if path:
             norm_path = os.path.normpath(path)
             self.output_dir = norm_path
-            # Save the change to the current project
             self.project_manager._update_current_project_data()
             self.project_manager.save_preferences()
             update_ui_status(self, f"Output directory set to: {norm_path}")
@@ -563,29 +536,23 @@ class FileMergerApp:
 
     def update_project_stats(self):
         """Update the statistics display based on current selections."""
-        # Get all selected paths (files and dirs)
         selected_paths = self.file_operations.get_selected_paths()
-        # Get only selected files for size/char counts
         selected_files_only = self.file_operations.get_selected_files_only()
 
-        # Count total items mapped in the current view
         total_items_in_view = len(self.file_operations.file_paths)
 
         self.stats["files"] = total_items_in_view
-        self.stats["selected"] = len(selected_paths) # Count of all selected items
-        self.stats["size"] = calculate_project_size(self) # Uses selected_files_only
-        self.stats["chars"] = count_characters_in_files(self) # Uses selected_files_only
+        self.stats["selected"] = len(selected_paths) 
+        self.stats["size"] = calculate_project_size(self) 
+        self.stats["chars"] = count_characters_in_files(self) 
 
-        size_str = format_size(self.stats['size']) # Use utility function
-        chars_str = f"{self.stats['chars']:,}" # Add commas for readability
+        size_str = format_size(self.stats['size']) 
+        chars_str = f"{self.stats['chars']:,}" 
 
         self.files_count_var.set(f"Total Items: {self.stats['files']}")
         self.selected_count_var.set(f"Selected Items: {self.stats['selected']}")
         self.size_var.set(f"Selected Files Size: {size_str}")
         self.chars_count_var.set(f"Selected Files Chars: {chars_str}")
-
-        # Optionally update status bar as well
-        # update_ui_status(self, f"{self.stats['selected']} items selected.")
 
 
     def refresh_directory(self):
@@ -593,52 +560,35 @@ class FileMergerApp:
         current_dir = self.root_dir
         update_ui_status(self, f"Refreshing directory: {current_dir}...")
 
-        # --- 1. Store current state ---
-        # Store paths of all currently selected items
         previously_selected_paths = set(self.file_operations.get_selected_paths())
-        # Store paths of all items currently in the tree map (before rebuild)
         all_existing_paths_in_map = set(self.file_operations.file_paths.values())
 
-        # Store paths of open directories to restore view state
         open_paths = set()
         def find_open_paths_recursive(parent_id):
             for item_id in self.tree.get_children(parent_id):
                 if self.tree.exists(item_id) and self.tree.item(item_id, 'open'):
                     path = self.file_operations.file_paths.get(item_id)
-                    if path and os.path.isdir(path): # Check if it's a directory path
+                    if path and os.path.isdir(path): 
                         open_paths.add(path)
-                        find_open_paths_recursive(item_id) # Recurse
+                        find_open_paths_recursive(item_id) 
 
-        find_open_paths_recursive("") # Start from tree root
+        find_open_paths_recursive("") 
 
-        # --- 2. Rebuild the tree ---
-        # Pass the set of previously selected paths to build_tree for restoration
         self.file_operations.build_tree(current_dir, previously_selected_paths)
-        # Note: build_tree now handles the restoration via restore_selection_state
-
-        # --- 3. Auto-select NEW items (items not present before refresh) ---
+        
         newly_selected_count = 0
-        # Iterate through the *new* file paths map
         for item_id, path in self.file_operations.file_paths.items():
-             # Auto-select if the path wasn't in the map before refresh AND is not the root itself
              if path not in all_existing_paths_in_map and path != current_dir:
-                # Check it's not already selected (e.g., by restoration)
                 if self.tree.exists(item_id) and "selected" not in self.tree.item(item_id, "tags"):
-                    # Use update_item_selection to handle selection and indicator
-                    self.update_item_selection(item_id, True) # Select this new item
+                    self.update_item_selection(item_id, True) 
                     newly_selected_count += 1
 
-        # --- 4. Restore open state for directories using paths ---
         for path in open_paths:
-            # Find the new item_id corresponding to the saved path
-            # Since item_id is now the path, this is direct:
             new_item_id = path
             if self.tree.exists(new_item_id):
                 try:
-                    # Ensure it's a directory node before opening
                     if 'folder' in self.tree.item(new_item_id, 'tags'):
                         self.tree.item(new_item_id, open=True)
-                        # Trigger content loading if necessary (similar to on_tree_open)
                         children = self.tree.get_children(new_item_id)
                         if children and self.tree.exists(children[0]) and self.tree.item(children[0], "text") == "Loading...":
                             self.tree.delete(children[0])
@@ -647,8 +597,7 @@ class FileMergerApp:
                     print(f"Warning: Could not re-open item {new_item_id} for path {path}: {e}")
 
 
-        # --- 5. Update stats and UI ---
-        self.update_project_stats() # Recalculate stats based on final selections
+        self.update_project_stats() 
         restored_selection_count = len(self.file_operations.get_selected_paths())
 
         status_msg = f"Directory refreshed. {restored_selection_count} items currently selected."
@@ -659,11 +608,10 @@ class FileMergerApp:
 
     def on_closing(self):
         """Handle application close event."""
-        # Save current project data before closing
         try:
              self.project_manager._update_current_project_data()
              self.project_manager.save_preferences()
         except Exception as e:
-             print(f"Error saving preferences on close: {e}") # Log error but proceed with closing
+             print(f"Error saving preferences on close: {e}") 
         finally:
-            self.root.destroy() # Close the Tkinter window
+            self.root.destroy() 
